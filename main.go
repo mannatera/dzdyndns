@@ -171,7 +171,7 @@ func updateCurrentFile() {
 	if err != nil {
 		fmt.Printf("Error when trying to create current file content: %s", err)
 	} else {
-		ioutil.WriteFile(basePath+currentFile, currentFileContent, 660)
+		ioutil.WriteFile(basePath+currentFile, currentFileContent, 0660)
 	}
 }
 
