@@ -1,5 +1,5 @@
 {
-	"fqdn": "", // Host and the domain you want to update. For example api.zone.ee updates host api of the domain zone.ee
-	"zoneid": "", // ZoneID
-	"token": "" // API token
+	"fqdn": "",
+	"zoneid": "",
+	"token": ""
 }
