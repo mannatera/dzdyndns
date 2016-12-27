@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -22,6 +23,7 @@ var (
 	host        string
 	domain      string
 	ip          string
+	basePath    string
 	apiVersion  = "1"
 	url         = "https://api.zone.eu/v" + apiVersion + "/domains/"
 	currentFile = "current.json"
@@ -76,7 +78,13 @@ type ARecordPost struct {
 }
 
 func main() {
-	config, err := ioutil.ReadFile("config.json")
+	dir, err := filepath.Abs(filepath.Dir(os.Args[0]))
+	if err != nil {
+		dir = "."
+	}
+	basePath = dir + string(filepath.Separator)
+
+	config, err := ioutil.ReadFile(basePath + "config.json")
 	if err == nil {
 		conf := Config{}
 		err = json.Unmarshal(config, &conf)
@@ -108,7 +116,7 @@ func main() {
 
 	ip = externalIP()
 
-	currentFileContent, err := ioutil.ReadFile("current.json")
+	currentFileContent, err := ioutil.ReadFile(basePath + currentFile)
 	if err == nil {
 		current := Current{}
 		err = json.Unmarshal(currentFileContent, &current)
@@ -163,7 +171,7 @@ func updateCurrentFile() {
 	if err != nil {
 		fmt.Printf("Error when trying to create current file content: %s", err)
 	} else {
-		ioutil.WriteFile(currentFile, currentFileContent, 600)
+		ioutil.WriteFile(basePath+currentFile, currentFileContent, 600)
 	}
 }
 
