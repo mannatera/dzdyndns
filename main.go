@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -12,8 +13,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/google/go-querystring/query"
 )
 
 var (
@@ -21,11 +20,10 @@ var (
 	zoneid      string
 	token       string
 	host        string
-	domain      string
 	ip          string
 	basePath    string
-	apiVersion  = "1"
-	url         = "https://api.zone.eu/v" + apiVersion + "/domains/"
+	apiVersion  = "2"
+	url         = "https://api.zone.eu/v" + apiVersion + "/dns/"
 	currentFile = "current.json"
 )
 
@@ -43,38 +41,14 @@ type Current struct {
 	Updated time.Time `json:"updated"`
 }
 
-// Response is the response type defined in DataZone public API documentation
-type Response struct {
-	Status   int               `json:"status"`
-	Messages []string          `json:"messages"`
-	Params   map[string]Domain `json:"params"`
-}
-
-// Domain defines domain response param structure defined in DataZone public API documentation
-type Domain struct {
-	NszoneID       string `json:"nszone_id"`
-	Adomain        string
-	AdomainUnicode string `json:"adomain_unicode"`
-	CreatedAt      string `json:"created_at"`
-	UpdatedAt      string `json:"updated_at"`
-	TTL            string
-	A              map[string]ARecord
-}
-
 // ARecord defines A record structure defined in DataZone public API documentation
 type ARecord struct {
-	ID          string
-	AllowModify bool   `json:"allow_modify"`
-	AllowDelete bool   `json:"allow_delete"`
-	Content     string `json:"content"`
-	Host        string
-}
-
-// ARecordPost structure of POST message for updating or creating A records, defined in DataZone public API documentation
-type ARecordPost struct {
-	Type    string `url:"type"`    // Always with value A
-	Prefix  string `url:"prefix"`  // Value from the host variable
-	Content string `url:"content"` // External IP of the client
+	ID          string `json:"id"`
+	AllowModify bool   `json:"modify"`
+	AllowDelete bool   `json:"delete"`
+	Destination string `json:"destination"`
+	Resource    string `json:"resource_url"`
+	Name        string `json:"name"`
 }
 
 func main() {
@@ -104,12 +78,11 @@ func main() {
 		log.Fatal("At least one of the required flag (-fqdn, -token, -zoneid) is missing! Append flag -h to get help for this command")
 	}
 
+	domain := fqdn
 	if strings.Count(fqdn, ".") > 1 {
 		fqdnParts := strings.SplitN(fqdn, ".", 2)
 		host = fqdnParts[0]
 		domain = fqdnParts[1]
-	} else {
-		domain = fqdn
 	}
 
 	url += domain + "/"
@@ -129,38 +102,48 @@ func main() {
 	records := aRecords()
 	record := ARecord{}
 	for _, v := range records {
-		if v.Host == fqdn {
+		if v.Name == fqdn {
 			record = v
 			break
 		}
 	}
-	updateARecord(record)
-}
 
-func aRecords() map[string]ARecord {
-	resp := requestHandler("GET", "records", nil)
-	response := Response{}
-
-	err := json.Unmarshal(resp, &response)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	return response.Params[domain].A
-}
-
-func updateARecord(r ARecord) {
-	if r.Content == ip {
+	if record.Destination == ip {
 		fmt.Println("IP already matches for FQDN: " + fqdn + " (" + ip + "). No update needed.")
 		updateCurrentFile()
 		os.Exit(0)
 	}
-	path := "records"
+
+	record.Destination = ip // Set new ip
+	updateARecord(record)
+}
+
+func aRecords() []ARecord {
+	resp := requestHandler("GET", "a", nil)
+	records := make([]ARecord, 0)
+
+	body, _ := ioutil.ReadAll(resp.Body)
+
+	err := json.Unmarshal(body, &records)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	return records
+}
+
+func updateARecord(r ARecord) {
+	path := "a"
 	if r.ID != "" {
 		path += "/" + r.ID
 	}
-	aRecord := ARecordPost{"A", host, ip}
-	requestHandler("POST", path, aRecord)
+
+	resp := requestHandler("PUT", path, r)
+
+	if resp.StatusCode == 404 {
+		log.Fatal("Unable to update DNS A record: " + resp.Header.Get("X-Status-Message"))
+	}
+
 	fmt.Println(fqdn + " was successfully set to " + ip)
 	updateCurrentFile()
 }
@@ -189,39 +172,27 @@ func externalIP() string {
 	return string(bytes.TrimSpace(body))
 }
 
-func requestHandler(method, path string, body interface{}) []byte {
-	content := ""
-	if body != nil {
-		v, _ := query.Values(body)
-		content = v.Encode()
-	}
+func requestHandler(method, path string, body interface{}) *http.Response {
+	content, err := json.Marshal(body)
 
-	req, err := http.NewRequest(method, url+path, strings.NewReader(content))
+	req, err := http.NewRequest(method, url+path, bytes.NewBuffer(content))
 	if err != nil {
 		log.Fatal(err)
 	}
-	req.Header.Set("X-ZoneID-Token", zoneid+":"+token)
-	req.Header.Set("X-ResponseType", "JSON")
 
-	if method == "POST" {
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	}
+	authb64 := base64.StdEncoding.EncodeToString([]byte(zoneid + ":" + token))
+	req.Header.Set("Authorization", "Basic "+authb64)
+	req.Header.Set("Content-Type", "application/json")
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer resp.Body.Close()
 
-	bodyContent, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		log.Fatal(err)
+	if resp.StatusCode == 401 {
+		log.Fatal("Invalid API token, unauthorized")
 	}
 
-	if string(bodyContent) == "invalid api token" {
-		log.Fatal("Invalid API token")
-	}
-
-	return bodyContent
+	return resp
 }
