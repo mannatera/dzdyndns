@@ -1,5 +1,7 @@
 # zone.ee DNS A record updater
 
+[![Go Report Card](https://goreportcard.com/badge/github.com/mannatera/dzdyndns)](https://goreportcard.com/report/github.com/mannatera/dzdyndns)
+
 Update existing DNS A record using [ZoneID API](https://api.zone.eu/v2) version 2
 
 ## Usage
